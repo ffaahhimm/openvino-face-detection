@@ -1,7 +1,8 @@
 # OpenVINO Face Detection 🎯
 
-Real-time face detection using Intel's OpenVINO toolkit and the `face-detection-0200` model — running on CPU with live webcam feed.
-
+Real-time face detection using Intel's OpenVINO toolkit and the 
+`face-detection-0200` model — with automatic device selection 
+(CPU/GPU/NPU) using the OpenVINO AUTO plugin.
 > Built as part of my GSoC 2026 preparation for the OpenVINO Toolkit organization.
 
 ---
