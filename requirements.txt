@@ -1,0 +1,15 @@
+# --- Runtime dependencies ---
+openvino>=2024.0.0        # inference runtime + AUTO plugin
+opencv-python>=4.8.0      # webcam capture and image ops
+numpy>=1.24.0             # tensor / array handling
+psutil>=5.9.0             # CPU and memory monitoring
+
+# --- Optional ---
+# GPU utilisation monitoring on NVIDIA hardware (best-effort; safe to omit).
+# nvidia-ml-py>=12.535.77
+#
+# Note: the optional live viewer (gui.py) uses OpenCV's window (already listed
+# above), so it needs no extra dependency.
+
+# --- Development / testing ---
+pytest>=7.4.0

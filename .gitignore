@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# OpenVINO model binaries (download via scripts/download_models.py)
+models/**/*.xml
+models/**/*.bin
+
+# OpenVINO on-disk kernel cache
+.ov_cache/
+
+# Logs
+*.log
