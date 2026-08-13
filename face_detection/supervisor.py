@@ -182,6 +182,9 @@ class ProcessInferenceSupervisor(threading.Thread):
         # the situation changes -- under a low overload threshold it would
         # otherwise repeat every backoff window for hours.
         self._no_target_logged = False
+        # Independent timer for probing excluded-but-possibly-recovered devices.
+        # Runs on its own flat interval, NOT gated by the escalating quarantine.
+        self._next_probe_check_at = 0.0
 
         self.stats = PipelineStats(device_provider=lambda: self._exec_device)
         self.on_result = Event("proc_result")          # (frame, detections, stats)
@@ -213,6 +216,9 @@ class ProcessInferenceSupervisor(threading.Thread):
                 continue
 
             self._maybe_request_upgrade()
+
+            self._maybe_request_upgrade()
+            self._maybe_probe_excluded_devices()
 
             if self._pending and (time.monotonic() - self._sent_at) > self._config.frame_timeout_sec:
                 _log.warning(
@@ -364,8 +370,6 @@ class ProcessInferenceSupervisor(threading.Thread):
         self._exec_device = _UNKNOWN_DEVICE
 
     def _rehabilitate(self, device: str, why: str = "a successful runtime switch") -> None:
-        """An excluded family proved usable again: re-enable it for respawns."""
-
         family = device.split(".", 1)[0].upper()
         if family == "GPU" and not self._params.allow_gpu:
             self._params = replace(self._params, allow_gpu=True)
@@ -373,10 +377,8 @@ class ProcessInferenceSupervisor(threading.Thread):
             self._params = replace(self._params, allow_npu=True)
         else:
             return
-        _log.info(
-            "%s rehabilitated (%s); re-enabled for worker respawns", family, why
-        )
-
+        self._crash_strikes.pop(family, None)   # <-- add this line
+        _log.info("%s rehabilitated (%s); re-enabled for worker respawns", family, why)
     # ------------------------------------------------------------------
     # Rediscovery of a vanished device
     # ------------------------------------------------------------------
@@ -565,8 +567,40 @@ class ProcessInferenceSupervisor(threading.Thread):
                 target,
             )
 
-    def _maybe_request_upgrade(self) -> None:
-        """Move inference back onto a recovered higher-priority device.
+    def _maybe_probe_excluded_devices(self) -> None:
+        """Independently probe whether a crashed/excluded device has come back.
+
+        This runs on a short, FLAT interval (20 s) regardless of how many times
+        the device has failed -- so escalating crash-quarantines do NOT delay
+        rediscovery.  The probe itself is cheap: it just spawns a tiny process
+        to ask OpenVINO 'what devices can you see?'  A successful probe schedules
+        a worker restart (_restart_to_rediscover) which is the only way to pick
+        the device back up once the live worker's ov.Core() cache has gone stale.
+        """
+        now = time.monotonic()
+        if now < self._next_probe_check_at:
+            return
+        # Flat 20-second interval -- intentionally not escalating.
+        self._next_probe_check_at = now + 20.0
+
+        # Find any device family that is currently excluded from params
+        # (allow_gpu=False or allow_npu=False) but is NOT already being probed.
+        if self._probe_thread is not None and self._probe_thread.is_alive():
+            return  # a probe is already running; don't stack them
+
+        excluded = []
+        if not self._params.allow_gpu:
+            excluded.append("GPU")
+        if not self._params.allow_npu:
+            excluded.append("NPU")
+
+        if not excluded:
+            return  # nothing excluded, nothing to probe
+
+        # Probe for the first excluded family (GPU takes priority over NPU).
+        self._start_absent_probe(excluded[0])
+
+    def _maybe_request_upgrade(self) -> None:        """Move inference back onto a recovered higher-priority device.
 
         Runs on the supervisor loop, self-rate-limited to
         ``preferred_retry_sec``. Deliberately independent of overload signals:
