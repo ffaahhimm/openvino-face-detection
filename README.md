@@ -5,9 +5,16 @@ detection built on the **OpenVINO AUTO Plugin**, with automatic device
 discovery, **runtime device switching**, and **automatic fallback** across
 **CPU, GPU and NPU**.
 
-This is the headless core only — there is **no GUI**. The architecture is
-deliberately event-driven so a Tkinter/Qt front-end can be layered on later by
-subscribing to the application's events, without touching any core logic.
+The application ships with a minimal live viewer, but all detection logic lives
+in a **headless, event-driven core**: the viewer is only a subscriber to the
+application's events, so it can be swapped for a Tkinter/Qt front-end — or
+dropped entirely with `--headless` — without touching a single core module.
+
+> **Google Summer of Code 2026 — OpenVINO Toolkit.**
+> This repository is the work product of the GSoC 2026 project *Continuous
+> Face-Detection with Automatic Device Switching on AI PCs using the OpenVINO
+> AUTO feature*. For the project goals, current state, what is left to do and
+> what was learned, see the **[final report](<GIST URL>)**.
 
 ---
 
@@ -54,8 +61,7 @@ project/
 │   ├── reporting.py        # ConsoleReporter (periodic structured stats line)
 │   ├── visualization.py    # OpenCV frame-annotation helpers (boxes + overlay)
 │   └── gui.py              # Live viewer (camera feed + device/FPS overlay)
-├── models/                 # OpenVINO IR files (downloaded, not committed)
-├── scripts/                # download_models.py
+├── models/                 # OpenVINO IR files (face-detection-0200, committed)
 ├── tests/                  # pytest unit tests
 ├── requirements.txt
 ├── pytest.ini
@@ -144,8 +150,9 @@ source .venv/bin/activate
 # 2. Install dependencies
 pip install -r requirements.txt
 
-# 3. Download the model (into models/face-detection-0200/)
-python scripts/download_models.py            # FP16 (recommended)
+# 3. Run it — the FP16 IR model is committed under models/face-detection-0200/,
+#    so there is nothing further to download.
+python main.py
 ```
 
 > GPU/NPU inference additionally requires the appropriate OpenVINO device
@@ -234,10 +241,12 @@ variables (see `config.py`):
 |----------|---------|---------|
 | `FD_CAMERA_INDEX` | `0` | Webcam index |
 | `FD_CAMERA_WIDTH` / `FD_CAMERA_HEIGHT` | `640` / `480` | Capture resolution |
+| `FD_CAMERA_FPS` | `30` | Requested capture frame rate |
 | `FD_CAMERA_DISCONNECT_GRACE` | `1.0` | Seconds of continuously failing reads before the camera is declared disconnected and rebuilt |
 | `FD_CAMERA_RECONNECT_DELAY` / `FD_CAMERA_RECONNECT_MAX_DELAY` | `1` / `10` | Recovery backoff: initial delay between reopen attempts, doubling up to the cap (s) |
 | `FD_CAMERA_HANG_TIMEOUT` | `5.0` | A read stuck in the driver longer than this is force-released to unblock the capture thread (`0` disables) |
 | `FD_MODEL_XML` | `models/.../face-detection-0200.xml` | Path to the IR model |
+| `FD_MODEL_BIN` | *(inferred)* | Path to the IR weights; derived from the `.xml` when empty |
 | `FD_CONFIDENCE` | `0.5` | Minimum detection confidence |
 | `FD_DEVICE_PRIORITY` | `GPU,NPU,CPU` | AUTO candidate + fallback order |
 | `FD_PERF_HINT` | `LATENCY` | OpenVINO performance hint |
@@ -248,14 +257,16 @@ variables (see `config.py`):
 | `FD_PREFERRED_RETRY` | `60` | How often to check whether a recovered higher-priority device can take the work back (`0` disables) |
 | `FD_MONITOR_INTERVAL` | `1.0` | Resource sampling interval (s) |
 | `FD_CPU_THRESHOLD` / `FD_MEM_THRESHOLD` | `90` | System overload thresholds (%) |
+| `FD_GPU_THRESHOLD` | `95` | GPU utilisation overload threshold (%); only fires when GPU load is observable |
 | `FD_LATENCY_THRESHOLD` | `300` | Avg inference time (ms) above which the active device is deemed overloaded → switch (`0` disables) |
 | `FD_INFERENCE_MODE` | `process` | `process` (isolated worker, crash-immune) or `thread` (same as `--thread`) |
 | `FD_FRAME_TIMEOUT` | `3.0` | Process mode: hang timeout before respawning the worker (s) |
 | `FD_MAX_RESTARTS` | `10` | Process mode: worker restarts (in quick succession) before giving up |
-| `FD_CRASH_COOLDOWN` | `300` | Seconds a device family the worker died on stays excluded (doubles per repeat offence; a successful switch back rehabilitates it) |
+| `FD_CRASH_COOLDOWN` | `60` | Seconds a device family the worker died on stays excluded (doubles per repeat offence, capped at 8x; a successful switch back rehabilitates it) |
 | `FD_CACHE_DIR` | `.ov_cache` | OpenVINO kernel cache dir (`""` disables) |
 | `FD_LOG_LEVEL` | `INFO` | Logging level |
 | `FD_LOG_FILE` | *(none)* | Optional log file path |
+| `FD_REPORT_INTERVAL` | `2.0` | Seconds between console stats lines |
 
 Example:
 
@@ -325,8 +336,9 @@ and the detector's SSD pre/post-processing.
 
 - NPU / GPU execution requires the matching OpenVINO device plugins and drivers;
   without them the AUTO plugin (and this app's fallback) gracefully use CPU.
-- The model files are binary artefacts and are **not** committed — run the
-  download script first.
+- The `face-detection-0200` FP16 IR files are committed under `models/` so the
+  application runs straight after `pip install -r requirements.txt`. Point
+  `FD_MODEL_XML` at another SSD-style face detector to swap models.
 - **Start-up speed:** on Windows the camera opens via DirectShow (much faster
   than the default MSMF backend, which can take several seconds to enumerate
   devices), the camera open and model compile run concurrently, and the GUI
@@ -367,7 +379,7 @@ Three independent failure domains are handled separately:
   hours never exhaust it). The respawned worker **excludes the device family
   the previous worker died on** — a worker that crashed while executing on GPU
   comes back on CPU within ~2 seconds instead of crash-looping. The exclusion
-  is **timed and escalating** (`FD_CRASH_COOLDOWN`, default 300 s, doubling per
+  is **timed and escalating** (`FD_CRASH_COOLDOWN`, default 60 s, doubling per
   repeat offence): a device wrongly blamed for a hang while the whole machine
   was starved gets another chance after the cooldown, and a successful switch
   back onto it fully rehabilitates it. CPU itself is never excluded. The
