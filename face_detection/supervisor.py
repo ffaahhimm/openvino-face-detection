@@ -601,7 +601,7 @@ class ProcessInferenceSupervisor(threading.Thread):
         self._start_absent_probe(excluded[0])
 
     def _maybe_request_upgrade(self) -> None:      
-      """Move inference back onto a recovered higher-priority device.
+        """Move inference back onto a recovered higher-priority device.
 
         Runs on the supervisor loop, self-rate-limited to
         ``preferred_retry_sec``. Deliberately independent of overload signals:
