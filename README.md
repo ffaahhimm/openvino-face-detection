@@ -318,13 +318,6 @@ app.switch_device("GPU")
 app.run()   # typically on a background thread, with the UI loop on the main thread
 ```
 
----
-
-## Testing
-
-```bash
-pytest
-```
 
 The suite covers the pure logic that needs neither a camera nor a GPU:
 configuration/env overrides, the event bus, the fallback policy and controller,
